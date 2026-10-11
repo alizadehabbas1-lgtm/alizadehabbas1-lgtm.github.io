@@ -720,3 +720,150 @@ body {
         border-top: 1px solid #ddd;
     }
 }
+/* ============ تراز افراد ============ */
+.balance-card {
+    background: white;
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    border-right: 5px solid #4F46E5;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.balance-card.positive { border-right-color: #10B981; }
+.balance-card.negative { border-right-color: #EF4444; }
+.balance-card.zero { border-right-color: #95a5a6; }
+
+.balance-card .b-person {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 100px;
+}
+.balance-card .b-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+.balance-card .b-name {
+    font-size: 14px;
+    font-weight: bold;
+    color: #2c3e50;
+}
+.balance-card .b-stats {
+    font-size: 10px;
+    color: #7f8c8d;
+    margin-top: 2px;
+}
+
+.balance-card .b-amounts {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    direction: ltr;
+}
+.balance-card .b-row {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    align-items: center;
+}
+.balance-card .b-label {
+    font-size: 9px;
+    color: #95a5a6;
+    direction: rtl;
+    margin-left: 4px;
+}
+.balance-card .b-income { color: #10B981; font-weight: bold; }
+.balance-card .b-expense { color: #EF4444; font-weight: bold; }
+.balance-card .b-balance {
+    font-size: 14px;
+    font-weight: bold;
+    padding: 2px 10px;
+    border-radius: 8px;
+    margin-top: 3px;
+}
+.balance-card .b-balance.positive {
+    color: #10B981;
+    background: #D1FAE5;
+}
+.balance-card .b-balance.negative {
+    color: #EF4444;
+    background: #FEE2E2;
+}
+.balance-card .b-balance.zero {
+    color: #7f8c8d;
+    background: #F3F4F6;
+}
+
+/* کارت جمع کل */
+.balance-total {
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    color: white;
+    border-radius: 12px;
+    padding: 14px;
+    margin-top: 10px;
+    box-shadow: 0 4px 12px rgba(79,70,229,0.3);
+}
+.balance-total h4 {
+    font-size: 13px;
+    margin-bottom: 10px;
+    opacity: 0.95;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    padding-bottom: 6px;
+}
+.balance-total .total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    font-size: 12px;
+}
+.balance-total .total-row .val {
+    font-weight: bold;
+    direction: ltr;
+    font-size: 13px;
+}
+.balance-total .total-balance {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 2px solid rgba(255,255,255,0.3);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+/* نمودار */
+.chart-container {
+    background: white;
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.chart-container h3 {
+    font-size: 13px;
+    color: #2c3e50;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid #ecf0f1;
+}
+.chart-container canvas {
+    max-height: 220px;
+}

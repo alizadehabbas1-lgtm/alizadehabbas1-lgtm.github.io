@@ -1,5 +1,6 @@
 // ============================================================
 //  خرجینه - اپلیکیشن مدیریت هزینه خانگی
+//  نسخه 3.2 - با تراز افراد و نمودار
 // ============================================================
 
 // ============================================================
@@ -62,12 +63,12 @@ let currentTab = 'all';
 let deleteTargetId = null;
 let currentUser = '';
 let deviceName = '';
+let balanceChartInstance = null;
 
 // ============================================================
-//  دسته‌بندی‌های پیش‌فرض (دو سطحی)
+//  دسته‌بندی‌های پیش‌فرض
 // ============================================================
 const DEFAULT_CATEGORIES = [
-    // ===== هزینه‌ها =====
     { id: 'food', name: 'خوراک', type: 'expense', icon: '🍔', parentId: null },
     { id: 'food_fruit', name: 'میوه و سبزیجات', type: 'expense', icon: '🍎', parentId: 'food' },
     { id: 'food_meat', name: 'گوشت و مرغ', type: 'expense', icon: '🍗', parentId: 'food' },
@@ -105,7 +106,6 @@ const DEFAULT_CATEGORIES = [
     { id: 'travel', name: 'سفر', type: 'expense', icon: '✈️', parentId: null },
     { id: 'other_expense', name: 'سایر هزینه‌ها', type: 'expense', icon: '💸', parentId: null },
     
-    // ===== درآمدها =====
     { id: 'salary', name: 'حقوق', type: 'income', icon: '💼', parentId: null },
     { id: 'salary_main', name: 'حقوق اصلی', type: 'income', icon: '💵', parentId: 'salary' },
     { id: 'salary_bonus', name: 'پاداش', type: 'income', icon: '🎁', parentId: 'salary' },
@@ -454,7 +454,6 @@ function saveTransaction(event) {
     const description = document.getElementById('description').value.trim();
     const owner = document.getElementById('owner').value.trim() || currentUser || 'نامشخص';
     
-    // دسته: اگه زیرشاخه انتخاب شده، اون رو بگیر، وگرنه دسته اصلی
     let category = document.getElementById('category').value;
     const subcat = document.getElementById('subcategory').value;
     if (subcat) category = subcat;
@@ -577,11 +576,11 @@ function backupData() {
         backupDateJalali: todayJalali(),
         backupBy: currentUser || 'نامشخص',
         device: deviceName || 'نامشخص',
-        app: 'kharijineh', version: 3,
+        app: 'kharijineh', version: 3.2,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     downloadFile(blob, buildFileName());
-    showToast(`✅ پشتیبان ذخیره شد (${transactions.length} تراکنش)`, 'success');
+    showToast(`✅ پشتیبان ذخیره شد (${transactions.length} تراکنش + ${categories.length} دسته)`, 'success');
 }
 
 async function shareData() {
@@ -596,7 +595,7 @@ async function shareData() {
         backupDateJalali: todayJalali(),
         backupBy: currentUser || 'نامشخص',
         device: deviceName || 'نامشخص',
-        app: 'kharijineh', version: 3,
+        app: 'kharijineh', version: 3.2,
     };
     
     const jsonStr = JSON.stringify(data, null, 2);
@@ -644,7 +643,7 @@ function restoreData(event) {
                 saveData();
                 renderTransactions();
                 updateSummary();
-                showToast(`✅ ${data.transactions.length} تراکنش بازیابی شد`, 'success');
+                showToast(`✅ ${data.transactions.length} تراکنش + ${categories.length} دسته بازیابی شد`, 'success');
             }
         } catch(err) {
             showToast('❌ خطا: ' + err.message, 'error');
@@ -684,7 +683,9 @@ function mergeData(event) {
                 if (!t.owner) t.owner = importedData.backupBy || 'نامشخص';
                 return t;
             });
-            const analysis = analyzeMerge(imported);
+            
+            const importedCats = importedData.categories || [];
+            const analysis = analyzeMerge(imported, importedCats);
             showMergePreview(analysis, imported, importedData);
         } catch(err) {
             showToast('❌ خطا: ' + err.message, 'error');
@@ -694,8 +695,9 @@ function mergeData(event) {
     event.target.value = '';
 }
 
-function analyzeMerge(imported) {
+function analyzeMerge(imported, importedCategories) {
     const newItems = [], updateItems = [], duplicates = [];
+    
     imported.forEach(imp => {
         const existing = transactions.find(t => t.uuid === imp.uuid);
         if (!existing) newItems.push(imp);
@@ -706,11 +708,38 @@ function analyzeMerge(imported) {
             else duplicates.push(imp);
         }
     });
-    return { newItems, updateItems, duplicates };
+    
+    const importedCats = [];
+    const newCats = [];
+    const updatedCats = [];
+    
+    if (importedCategories && importedCategories.length > 0) {
+        importedCategories.forEach(impCat => {
+            const existing = categories.find(c => c.id === impCat.id);
+            if (!existing) {
+                importedCats.push(impCat);
+                newCats.push(impCat);
+            } else {
+                if (impCat.name !== existing.name || 
+                    impCat.icon !== existing.icon || 
+                    impCat.parentId !== existing.parentId ||
+                    impCat.type !== existing.type) {
+                    importedCats.push(impCat);
+                    updatedCats.push({ existing, imported: impCat });
+                }
+            }
+        });
+    }
+    
+    return { 
+        newItems, updateItems, duplicates, 
+        importedCategories: importedCats,
+        newCats, updatedCats
+    };
 }
 
 function showMergePreview(analysis, imported, importedData) {
-    const { newItems, updateItems, duplicates } = analysis;
+    const { newItems, updateItems, duplicates, newCats, updatedCats } = analysis;
     
     const byOwner = {};
     newItems.forEach(t => {
@@ -733,6 +762,29 @@ function showMergePreview(analysis, imported, importedData) {
                         <strong>${count} تراکنش</strong>
                     </div>
                 `).join('')}
+            </div>
+        `;
+    }
+    
+    let catHtml = '';
+    if ((newCats && newCats.length > 0) || (updatedCats && updatedCats.length > 0)) {
+        catHtml = `
+            <div style="background:#F0FDF4;border-radius:10px;padding:10px;margin-bottom:10px;border-right:4px solid #10B981;">
+                <div style="font-size:12px;font-weight:bold;color:#065F46;margin-bottom:6px;">
+                    📂 دسته‌بندی‌ها:
+                </div>
+                ${newCats && newCats.length > 0 ? `
+                    <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;">
+                        <span>🆕 دسته‌های جدید:</span>
+                        <strong style="color:#27ae60;">${newCats.length}</strong>
+                    </div>
+                ` : ''}
+                ${updatedCats && updatedCats.length > 0 ? `
+                    <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;">
+                        <span>✏️ دسته‌های به‌روزرسانی:</span>
+                        <strong style="color:#f39c12;">${updatedCats.length}</strong>
+                    </div>
+                ` : ''}
             </div>
         `;
     }
@@ -767,7 +819,7 @@ function showMergePreview(analysis, imported, importedData) {
                 </div>
                 <div style="background:white;border-radius:8px;padding:10px;">
                     <div style="display:flex;justify-content:space-between;padding:4px 0;">
-                        <span style="font-size:12px;">🆕 جدید:</span>
+                        <span style="font-size:12px;">🆕 تراکنش جدید:</span>
                         <strong style="color:#27ae60;">${newItems.length}</strong>
                     </div>
                     <div style="display:flex;justify-content:space-between;padding:4px 0;">
@@ -778,13 +830,16 @@ function showMergePreview(analysis, imported, importedData) {
                         <span style="font-size:12px;">👥 تکراری:</span>
                         <strong style="color:#95a5a6;">${duplicates.length}</strong>
                     </div>
-                    <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:14px;font-weight:bold;border-top:2px solid #ecf0f1;margin-top:6px;">
-                        <span>📊 مجموع بعد از ادغام:</span>
-                        <strong style="color:#4F46E5;">${transactions.length + newItems.length}</strong>
+                    ${newCats && newCats.length > 0 ? `
+                    <div style="display:flex;justify-content:space-between;padding:4px 0;">
+                        <span style="font-size:12px;">📂 دسته جدید:</span>
+                        <strong style="color:#10B981;">${newCats.length}</strong>
                     </div>
+                    ` : ''}
                 </div>
             </div>
             ${ownerHtml}
+            ${catHtml}
             <div class="btn-row">
                 <button onclick="confirmMerge()" style="background:#4F46E5;color:white;">🔀 ادغام کن</button>
                 <button onclick="closeMergeModal()" style="background:#95a5a6;color:white;">✕ انصراف</button>
@@ -808,9 +863,28 @@ function confirmMerge() {
     if (!imported || !analysis) return;
     
     localStorage.setItem('kharijineh_auto_backup_' + Date.now(), 
-        JSON.stringify({ transactions, nextId }));
+        JSON.stringify({ transactions, categories, nextId }));
     
     let added = 0, updated = 0;
+    let catAdded = 0, catUpdated = 0;
+    
+    if (analysis.importedCategories && analysis.importedCategories.length > 0) {
+        analysis.importedCategories.forEach(impCat => {
+            const existing = categories.find(c => c.id === impCat.id);
+            if (!existing) {
+                categories.push(impCat);
+                catAdded++;
+            } else {
+                existing.name = impCat.name;
+                existing.icon = impCat.icon;
+                existing.parentId = impCat.parentId;
+                existing.type = impCat.type;
+                catUpdated++;
+            }
+        });
+        saveCategories();
+    }
+    
     analysis.newItems.forEach(t => {
         if (!t.uuid) t.uuid = generateUUID();
         if (!t.id) t.id = nextId++;
@@ -818,6 +892,7 @@ function confirmMerge() {
         transactions.push(t);
         added++;
     });
+    
     analysis.updateItems.forEach(({ existing, imported }) => {
         Object.assign(existing, imported);
         updated++;
@@ -826,11 +901,12 @@ function confirmMerge() {
     saveData();
     renderTransactions();
     updateSummary();
+    renderSettings();
     closeMergeModal();
-    setTimeout(() => showMergeResult(added, updated, analysis.duplicates.length), 200);
+    setTimeout(() => showMergeResult(added, updated, analysis.duplicates.length, catAdded, catUpdated), 200);
 }
 
-function showMergeResult(added, updated, duplicates) {
+function showMergeResult(added, updated, duplicates, catAdded = 0, catUpdated = 0) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay active';
     modal.id = 'mergeResultModal';
@@ -843,6 +919,7 @@ function showMergeResult(added, updated, duplicates) {
             <div style="text-align:center;padding:16px 0;">
                 <div style="font-size:50px;margin-bottom:12px;">🎉</div>
                 <div style="background:#f8f9fa;border-radius:12px;padding:14px;text-align:right;">
+                    <div style="font-size:11px;font-weight:bold;color:#7f8c8d;margin-bottom:6px;">📊 تراکنش‌ها:</div>
                     <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #ecf0f1;">
                         <span>🆕 اضافه شده:</span><strong style="color:#27ae60;">${added}</strong>
                     </div>
@@ -852,8 +929,24 @@ function showMergeResult(added, updated, duplicates) {
                     <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #ecf0f1;">
                         <span>👥 تکراری:</span><strong style="color:#95a5a6;">${duplicates}</strong>
                     </div>
-                    <div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:bold;">
-                        <span>📊 مجموع:</span><strong style="color:#4F46E5;">${transactions.length}</strong>
+                    ${(catAdded > 0 || catUpdated > 0) ? `
+                    <div style="font-size:11px;font-weight:bold;color:#7f8c8d;margin-top:10px;margin-bottom:6px;">📂 دسته‌بندی‌ها:</div>
+                    ${catAdded > 0 ? `
+                    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #ecf0f1;">
+                        <span>🆕 اضافه شده:</span><strong style="color:#10B981;">${catAdded}</strong>
+                    </div>
+                    ` : ''}
+                    ${catUpdated > 0 ? `
+                    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #ecf0f1;">
+                        <span>✏️ به‌روزرسانی:</span><strong style="color:#f39c12;">${catUpdated}</strong>
+                    </div>
+                    ` : ''}
+                    ` : ''}
+                    <div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:bold;margin-top:8px;border-top:2px solid #ecf0f1;">
+                        <span>📊 مجموع تراکنش‌ها:</span><strong style="color:#4F46E5;">${transactions.length}</strong>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;padding:4px 0;font-weight:bold;font-size:12px;">
+                        <span>📂 مجموع دسته‌ها:</span><strong style="color:#4F46E5;">${categories.length}</strong>
                     </div>
                 </div>
             </div>
@@ -872,7 +965,6 @@ let reportFilters = {
     dateFrom: '',
     dateTo: '',
     owner: '',
-    category: '',
     type: 'all',
 };
 
@@ -880,7 +972,12 @@ function renderReport() {
     const container = document.getElementById('reportContainer');
     if (!container) return;
     
-    // محاسبه‌ی جمع‌ها با فیلتر
+    // destroy chart if exists
+    if (balanceChartInstance) {
+        balanceChartInstance.destroy();
+        balanceChartInstance = null;
+    }
+    
     const filtered = applyReportFilters(transactions);
     
     let totalIncome = 0, totalExpense = 0;
@@ -915,12 +1012,13 @@ function renderReport() {
     );
     const categoriesSorted = Object.entries(byCategory).sort((a, b) => b[1].total - a[1].total);
     
-    // لیست افراد
     const allOwners = [...new Set(transactions.map(t => t.owner || 'نامشخص'))].sort();
     
     let html = '';
     
+    // ==========================================
     // فیلترها
+    // ==========================================
     html += `
         <div class="report-section">
             <h3>🔍 فیلترها</h3>
@@ -954,44 +1052,103 @@ function renderReport() {
         </div>
     `;
     
-    // خلاصه
+    // ==========================================
+    // خلاصه کل
+    // ==========================================
     html += `
         <div class="report-summary">
             <div class="report-summary-item inc">
-                <div class="lbl">📈 درآمد</div>
+                <div class="lbl">📈 کل درآمد</div>
                 <div class="val">${formatAmount(totalIncome)}</div>
             </div>
             <div class="report-summary-item exp">
-                <div class="lbl">📉 هزینه</div>
+                <div class="lbl">📉 کل هزینه</div>
                 <div class="val">${formatAmount(totalExpense)}</div>
             </div>
             <div class="report-summary-item bal">
-                <div class="lbl">💎 مانده</div>
+                <div class="lbl">💎 مانده کل</div>
                 <div class="val">${formatAmount(totalBalance)}</div>
             </div>
         </div>
     `;
     
-    // گزارش افراد
+    // ==========================================
+    // تراز هر نفر
+    // ==========================================
     if (personsSorted.length > 0) {
-        html += `<div class="report-section"><h3>👥 گزارش به تفکیک افراد</h3>`;
+        html += `<div class="report-section"><h3>⚖️ تراز افراد</h3>`;
+        
         personsSorted.forEach(([name, data]) => {
             const balance = data.income - data.expense;
+            let balanceClass = 'zero';
+            if (balance > 0) balanceClass = 'positive';
+            else if (balance < 0) balanceClass = 'negative';
+            
+            const initial = name.charAt(0).toUpperCase();
+            
             html += `
-                <div class="report-row">
-                    <div class="person-name">👤 ${name} <span style="font-size:10px;color:#95a5a6;">(${data.count} تراکنش)</span></div>
-                    <div class="amounts">
-                        <span class="income-amt">+${formatAmount(data.income)}</span>
-                        <span class="expense-amt">-${formatAmount(data.expense)}</span>
-                        <span class="balance-amt">${formatAmount(balance)}</span>
+                <div class="balance-card ${balanceClass}">
+                    <div class="b-person">
+                        <div class="b-avatar">${initial}</div>
+                        <div>
+                            <div class="b-name">👤 ${name}</div>
+                            <div class="b-stats">${data.count} تراکنش</div>
+                        </div>
+                    </div>
+                    <div class="b-amounts">
+                        <div class="b-row">
+                            <span class="b-label">درآمد</span>
+                            <span class="b-income">+${formatAmount(data.income)}</span>
+                        </div>
+                        <div class="b-row">
+                            <span class="b-label">هزینه</span>
+                            <span class="b-expense">-${formatAmount(data.expense)}</span>
+                        </div>
+                        <div class="b-balance ${balanceClass}">
+                            ${balance >= 0 ? '+' : '-'}${formatAmount(balance)}
+                        </div>
                     </div>
                 </div>
             `;
         });
+        
+        // جمع کل
+        html += `
+            <div class="balance-total">
+                <h4>📊 جمع کل</h4>
+                <div class="total-row">
+                    <span>📈 کل درآمد</span>
+                    <span class="val">+${formatAmount(totalIncome)}</span>
+                </div>
+                <div class="total-row">
+                    <span>📉 کل هزینه</span>
+                    <span class="val">-${formatAmount(totalExpense)}</span>
+                </div>
+                <div class="total-balance">
+                    <span>💎 مانده کل</span>
+                    <span class="val">${totalBalance >= 0 ? '+' : '-'}${formatAmount(totalBalance)}</span>
+                </div>
+            </div>
+        `;
+        
         html += `</div>`;
     }
     
+    // ==========================================
+    // نمودار تراز افراد
+    // ==========================================
+    if (personsSorted.length > 0) {
+        html += `
+            <div class="chart-container">
+                <h3>📊 نمودار تراز افراد</h3>
+                <canvas id="balanceChart"></canvas>
+            </div>
+        `;
+    }
+    
+    // ==========================================
     // گزارش دسته‌بندی
+    // ==========================================
     if (categoriesSorted.length > 0) {
         html += `<div class="report-section"><h3>📂 گزارش به تفکیک دسته‌بندی</h3>`;
         categoriesSorted.forEach(([catId, data]) => {
@@ -1010,12 +1167,14 @@ function renderReport() {
         html += `</div>`;
     }
     
+    // ==========================================
     // دکمه پرینت
+    // ==========================================
     html += `
         <div class="report-section" style="text-align:center;">
-<button onclick="printReport()" style="background:#27ae60;color:white;padding:12px 24px;border:none;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;font-family:inherit;">
-    🖨️ پرینت گزارش
-</button>
+            <button onclick="printReport()" style="background:#27ae60;color:white;padding:12px 24px;border:none;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;font-family:inherit;">
+                🖨️ پرینت گزارش
+            </button>
         </div>
     `;
     
@@ -1024,6 +1183,88 @@ function renderReport() {
     }
     
     container.innerHTML = html;
+    
+    // ==========================================
+    // رسم نمودار
+    // ==========================================
+    if (personsSorted.length > 0 && document.getElementById('balanceChart')) {
+        drawBalanceChart(personsSorted);
+    }
+}
+
+function drawBalanceChart(personsSorted) {
+    const ctx = document.getElementById('balanceChart');
+    if (!ctx) return;
+    
+    // چک کن Chart.js لود شده یا نه
+    if (typeof Chart === 'undefined') {
+        console.warn('Chart.js لود نشده');
+        // بارگذاری Chart.js
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+        script.onload = () => drawBalanceChart(personsSorted);
+        document.head.appendChild(script);
+        return;
+    }
+    
+    const labels = personsSorted.map(([name]) => name);
+    const balances = personsSorted.map(([, data]) => data.income - data.expense);
+    const colors = balances.map(b => b >= 0 ? '#10B981' : '#EF4444');
+    
+    balanceChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'تراز (تومان)',
+                data: balances,
+                backgroundColor: colors,
+                borderRadius: 8,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const val = context.parsed.y;
+                            return (val >= 0 ? '+' : '-') + Math.abs(val).toLocaleString('en-US');
+                        }
+                    },
+                    rtl: true,
+                    textDirection: 'rtl',
+                    titleFont: { family: 'Tahoma' },
+                    bodyFont: { family: 'Tahoma' }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        font: { family: 'Tahoma', size: 10 },
+                        callback: function(value) {
+                            if (Math.abs(value) >= 1000000) {
+                                return (value / 1000000).toFixed(1) + 'M';
+                            }
+                            if (Math.abs(value) >= 1000) {
+                                return (value / 1000).toFixed(0) + 'K';
+                            }
+                            return value;
+                        }
+                    },
+                    grid: { color: '#f0f0f0' }
+                },
+                x: {
+                    ticks: { font: { family: 'Tahoma', size: 11 } },
+                    grid: { display: false }
+                }
+            }
+        }
+    });
 }
 
 function applyReportFilters(data) {
@@ -1032,7 +1273,6 @@ function applyReportFilters(data) {
         if (reportFilters.dateTo && t.date > reportFilters.dateTo) return false;
         if (reportFilters.owner && (t.owner || 'نامشخص') !== reportFilters.owner) return false;
         if (reportFilters.type !== 'all' && t.type !== reportFilters.type) return false;
-        if (reportFilters.category && t.category !== reportFilters.category) return false;
         return true;
     });
 }
@@ -1046,8 +1286,101 @@ function applyFilters() {
 }
 
 function resetFilters() {
-    reportFilters = { dateFrom: '', dateTo: '', owner: '', category: '', type: 'all' };
+    reportFilters = { dateFrom: '', dateTo: '', owner: '', type: 'all' };
     renderReport();
+}
+
+// ============================================================
+//  پرینت گزارش
+// ============================================================
+function printReport() {
+    const reportContent = document.getElementById('reportContainer').cloneNode(true);
+    
+    const filterSection = reportContent.querySelector('.report-section:first-child');
+    if (filterSection && filterSection.innerHTML.includes('فیلترها')) {
+        filterSection.remove();
+    }
+    
+    // حذف نمودار (چون در پنجره‌ی جدید رسم نمی‌شه)
+    const chartContainer = reportContent.querySelector('.chart-container');
+    if (chartContainer) chartContainer.remove();
+    
+    const printBtn = reportContent.querySelector('button');
+    if (printBtn && printBtn.textContent.includes('پرینت')) {
+        printBtn.parentElement.remove();
+    }
+    
+    const title = `
+        <div style="text-align:center;margin-bottom:20px;padding-bottom:15px;border-bottom:3px solid #4F46E5;">
+            <h1 style="font-size:22px;color:#2c3e50;margin:0;">💰 خرجینه</h1>
+            <p style="font-size:12px;color:#7f8c8d;margin:5px 0 0 0;">گزارش مالی</p>
+            <p style="font-size:11px;color:#7f8c8d;margin:3px 0 0 0;">تاریخ چاپ: ${todayJalali()}</p>
+            ${currentUser ? '<p style="font-size:11px;color:#7f8c8d;margin:3px 0 0 0;">کاربر: ' + currentUser + '</p>' : ''}
+        </div>
+    `;
+    
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+        <!DOCTYPE html>
+        <html lang="fa" dir="rtl">
+        <head>
+            <meta charset="UTF-8">
+            <title>گزارش خرجینه - ${todayJalali()}</title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Tahoma', 'Segoe UI', sans-serif; }
+                body { direction: rtl; padding: 20px; background: white; color: #000; }
+                .report-section { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 15px; page-break-inside: avoid; }
+                .report-section h3 { font-size: 14px; color: #000; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #000; }
+                .report-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 4px; border-bottom: 1px solid #eee; font-size: 13px; }
+                .report-row:last-child { border-bottom: none; }
+                .report-row .person-name { font-weight: bold; color: #000; }
+                .report-row .amounts { display: flex; gap: 8px; direction: ltr; font-size: 11px; }
+                .report-row .expense-amt { color: #EF4444; font-weight: bold; }
+                .report-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 15px; }
+                .report-summary-item { background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 10px; text-align: center; }
+                .report-summary-item .lbl { font-size: 10px; color: #7f8c8d; }
+                .report-summary-item .val { font-size: 14px; font-weight: bold; margin-top: 3px; direction: ltr; }
+                .report-summary-item.inc .val { color: #10B981; }
+                .report-summary-item.exp .val { color: #EF4444; }
+                .report-summary-item.bal .val { color: #4F46E5; }
+                
+                /* تراز */
+                .balance-card { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border-right: 4px solid #4F46E5; }
+                .balance-card.positive { border-right-color: #10B981; }
+                .balance-card.negative { border-right-color: #EF4444; }
+                .balance-card .b-avatar { width: 36px; height: 36px; border-radius: 50%; background: #4F46E5; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+                .balance-card .b-name { font-weight: bold; font-size: 13px; }
+                .balance-card .b-stats { font-size: 10px; color: #7f8c8d; }
+                .balance-card .b-income { color: #10B981; font-weight: bold; font-size: 12px; direction: ltr; }
+                .balance-card .b-expense { color: #EF4444; font-weight: bold; font-size: 12px; direction: ltr; }
+                .balance-card .b-balance { font-weight: bold; font-size: 13px; padding: 3px 8px; border-radius: 6px; direction: ltr; }
+                .balance-card .b-balance.positive { color: #10B981; background: #D1FAE5; }
+                .balance-card .b-balance.negative { color: #EF4444; background: #FEE2E2; }
+                .balance-total { background: #4F46E5; color: white; border-radius: 8px; padding: 12px; margin-top: 10px; }
+                .balance-total h4 { font-size: 12px; margin-bottom: 8px; }
+                .balance-total .total-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+                .balance-total .total-balance { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.3); display: flex; justify-content: space-between; font-weight: bold; }
+                
+                .footer-print { text-align: center; font-size: 10px; color: #666; margin-top: 20px; padding-top: 10px; border-top: 1px solid #ddd; }
+                @media print { body { padding: 10px; } .report-section { page-break-inside: avoid; } }
+            </style>
+        </head>
+        <body>
+            ${title}
+            ${reportContent.innerHTML}
+            <div class="footer-print">
+                این گزارش توسط اپلیکیشن خرجینه ساخته شده است • ${todayJalali()}
+            </div>
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
+    
+    printWindow.onload = function() {
+        setTimeout(() => {
+            printWindow.print();
+        }, 300);
+    };
 }
 
 // ============================================================
@@ -1152,7 +1485,6 @@ function openCategoryModal(catId, presetType) {
     document.getElementById('catIcon').value = '📁';
     parentGroup.style.display = 'block';
     
-    // پر کردن والد
     const allMains = categories.filter(c => !c.parentId);
     parentSelect.innerHTML = '<option value="">— دسته اصلی —</option>' +
         allMains.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('');
@@ -1227,7 +1559,6 @@ function deleteCategory(catId) {
     
     if (!confirm(`حذف "${cat.name}"؟`)) return;
     
-    // حذف زیرشاخه‌ها
     categories = categories.filter(c => c.id !== catId && c.parentId !== catId);
     saveCategories();
     renderSettings();
@@ -1278,156 +1609,6 @@ if (!currentUser) {
     }, 500);
 }
 
-console.log('💰 خرجینه v3 آماده است');
+console.log('💰 خرجینه v3.2 آماده است');
 console.log(`📊 تراکنش‌ها: ${transactions.length}`);
 console.log(`📂 دسته‌ها: ${categories.length}`);
-// ============================================================
-//  پرینت گزارش
-// ============================================================
-function printReport() {
-    // یه clone از گزارش می‌سازیم
-    const reportContent = document.getElementById('reportContainer').cloneNode(true);
-    
-    // حذف بخش فیلترها
-    const filterSection = reportContent.querySelector('.report-section:first-child');
-    if (filterSection && filterSection.innerHTML.includes('فیلترها')) {
-        filterSection.remove();
-    }
-    
-    // حذف دکمه‌ی پرینت
-    const printBtn = reportContent.querySelector('button');
-    if (printBtn && printBtn.textContent.includes('پرینت')) {
-        printBtn.parentElement.remove();
-    }
-    
-    // تاریخ و عنوان
-    const title = `
-        <div style="text-align:center;margin-bottom:20px;padding-bottom:15px;border-bottom:3px solid #4F46E5;">
-            <h1 style="font-size:22px;color:#2c3e50;margin:0;">💰 خرجینه</h1>
-            <p style="font-size:12px;color:#7f8c8d;margin:5px 0 0 0;">گزارش مالی</p>
-            <p style="font-size:11px;color:#7f8c8d;margin:3px 0 0 0;">تاریخ چاپ: ${todayJalali()}</p>
-            ${currentUser ? '<p style="font-size:11px;color:#7f8c8d;margin:3px 0 0 0;">کاربر: ' + currentUser + '</p>' : ''}
-        </div>
-    `;
-    
-    // پنجره‌ی چاپ
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-        <!DOCTYPE html>
-        <html lang="fa" dir="rtl">
-        <head>
-            <meta charset="UTF-8">
-            <title>گزارش خرجینه - ${todayJalali()}</title>
-            <style>
-                * {
-                    margin: 0;
-                    padding: 0;
-                    box-sizing: border-box;
-                    font-family: 'Tahoma', 'Segoe UI', sans-serif;
-                }
-                body {
-                    direction: rtl;
-                    padding: 20px;
-                    background: white;
-                    color: #000;
-                }
-                .report-section {
-                    background: white;
-                    border: 1px solid #ddd;
-                    border-radius: 8px;
-                    padding: 12px;
-                    margin-bottom: 15px;
-                    page-break-inside: avoid;
-                }
-                .report-section h3 {
-                    font-size: 14px;
-                    color: #000;
-                    margin-bottom: 10px;
-                    padding-bottom: 6px;
-                    border-bottom: 2px solid #000;
-                }
-                .report-row {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 8px 4px;
-                    border-bottom: 1px solid #eee;
-                    font-size: 13px;
-                }
-                .report-row:last-child { border-bottom: none; }
-                .report-row .person-name {
-                    font-weight: bold;
-                    color: #000;
-                }
-                .report-row .amounts {
-                    display: flex;
-                    gap: 8px;
-                    direction: ltr;
-                    font-size: 11px;
-                }
-                .report-row .income-amt { color: #10B981; font-weight: bold; }
-                .report-row .expense-amt { color: #EF4444; font-weight: bold; }
-                .report-row .balance-amt {
-                    color: #4F46E5;
-                    font-weight: bold;
-                    padding: 1px 6px;
-                    background: #EEF2FF;
-                    border-radius: 6px;
-                }
-                .report-summary {
-                    display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 6px;
-                    margin-bottom: 15px;
-                }
-                .report-summary-item {
-                    background: #f8f9fa;
-                    border: 1px solid #ddd;
-                    border-radius: 8px;
-                    padding: 10px;
-                    text-align: center;
-                }
-                .report-summary-item .lbl { font-size: 10px; color: #7f8c8d; }
-                .report-summary-item .val {
-                    font-size: 14px;
-                    font-weight: bold;
-                    margin-top: 3px;
-                    direction: ltr;
-                }
-                .report-summary-item.inc .val { color: #10B981; }
-                .report-summary-item.exp .val { color: #EF4444; }
-                .report-summary-item.bal .val { color: #4F46E5; }
-                
-                .footer-print {
-                    text-align: center;
-                    font-size: 10px;
-                    color: #666;
-                    margin-top: 20px;
-                    padding-top: 10px;
-                    border-top: 1px solid #ddd;
-                }
-                
-                @media print {
-                    body { padding: 10px; }
-                    .report-section { page-break-inside: avoid; }
-                }
-            </style>
-        </head>
-        <body>
-            ${title}
-            ${reportContent.innerHTML}
-            <div class="footer-print">
-                این گزارش توسط اپلیکیشن خرجینه ساخته شده است • ${todayJalali()}
-            </div>
-        </body>
-        </html>
-    `);
-    printWindow.document.close();
-    
-    // صبر کن تا لود بشه، بعد چاپ کن
-    printWindow.onload = function() {
-        setTimeout(() => {
-            printWindow.print();
-        }, 300);
-    };
-}
